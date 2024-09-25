@@ -1,0 +1,131 @@
+import simpy
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Simulation parameters (all in minutes)
+MEAN_INTERARRIVAL_TIME = 11
+REGISTRATION_TIME_MIN = 5
+REGISTRATION_TIME_MODE = 10
+REGISTRATION_TIME_MAX = 15
+CHECKUP_TIME_MIN = 14
+CHECKUP_TIME_MODE = 22
+CHECKUP_TIME_MAX = 39
+LAB_TEST_TIME_MIN = 20
+LAB_TEST_TIME_MODE = 30
+LAB_TEST_TIME_MAX = 40
+SPECIALIST_TIME_MIN = 25
+SPECIALIST_TIME_MODE = 35
+SPECIALIST_TIME_MAX = 50
+SIMULATION_HOURS_PER_DAY = 16
+SIMULATION_DAYS = 7
+REPLICATIONS = 100
+
+# Simulation results
+avg_time_in_queue_registration = []
+avg_time_in_queue_doctor = []
+avg_time_in_queue_lab = []
+avg_time_in_queue_specialist = []
+total_patients_exited = []
+
+def patient(env, name, receptionist, doctors, nurse, specialists, 
+            queue_times_registration, queue_times_doctor, queue_times_lab, queue_times_specialist, exit_count):
+    arrival_time = env.now
+
+    # Registration
+    with receptionist.request() as request:
+        yield request
+        queue_time = env.now - arrival_time
+        queue_times_registration.append(queue_time)
+        registration_time = np.random.triangular(REGISTRATION_TIME_MIN, REGISTRATION_TIME_MODE, REGISTRATION_TIME_MAX)
+        yield env.timeout(registration_time)
+
+    # Doctor Checkup
+    arrival_time_doctor = env.now
+    with doctors.request() as request:
+        yield request
+        queue_time = env.now - arrival_time_doctor
+        queue_times_doctor.append(queue_time)
+        checkup_time = np.random.triangular(CHECKUP_TIME_MIN, CHECKUP_TIME_MODE, CHECKUP_TIME_MAX)
+        yield env.timeout(checkup_time)
+
+    # Optional Lab Test
+    if np.random.rand() < 0.1:
+        arrival_time_lab = env.now
+        with nurse.request() as request:
+            yield request
+            queue_time = env.now - arrival_time_lab
+            queue_times_lab.append(queue_time)
+            lab_test_time = np.random.triangular(LAB_TEST_TIME_MIN, LAB_TEST_TIME_MODE, LAB_TEST_TIME_MAX)
+            yield env.timeout(lab_test_time)
+
+    # Optional Specialist Consultation
+    if np.random.rand() < 0.3:
+        arrival_time_specialist = env.now
+        with specialists.request() as request:
+            yield request
+            queue_time = env.now - arrival_time_specialist
+            queue_times_specialist.append(queue_time)
+            specialist_time = np.random.triangular(SPECIALIST_TIME_MIN, SPECIALIST_TIME_MODE, SPECIALIST_TIME_MAX)
+            yield env.timeout(specialist_time)
+
+    # Patient exits the system
+    exit_count.append(1)
+
+def run_clinic(env, receptionist, doctors, nurse, specialists, interarrival_time, 
+               queue_times_registration, queue_times_doctor, queue_times_lab, queue_times_specialist, exit_count):
+    i = 0
+    while True:
+        yield env.timeout(np.random.exponential(interarrival_time))
+        env.process(patient(env, f'Patient {i}', receptionist, doctors, nurse, specialists, 
+                            queue_times_registration, queue_times_doctor, queue_times_lab, queue_times_specialist, exit_count))
+        i += 1
+
+for _ in range(REPLICATIONS):
+    env = simpy.Environment()
+    receptionist = simpy.Resource(env, capacity=1)
+    doctors = simpy.Resource(env, capacity=2)
+    nurse = simpy.Resource(env, capacity=1)
+    specialists = simpy.Resource(env, capacity=2)
+    queue_times_registration = []
+    queue_times_doctor = []
+    queue_times_lab = []
+    queue_times_specialist = []
+    exit_count = []
+
+    env.process(run_clinic(env, receptionist, doctors, nurse, specialists, MEAN_INTERARRIVAL_TIME, 
+                           queue_times_registration, queue_times_doctor, queue_times_lab, queue_times_specialist, exit_count))
+    env.run(until=SIMULATION_HOURS_PER_DAY * 60 * SIMULATION_DAYS)
+
+    avg_time_in_queue_registration.append(np.mean(queue_times_registration))
+    avg_time_in_queue_doctor.append(np.mean(queue_times_doctor))
+    avg_time_in_queue_lab.append(np.mean(queue_times_lab) if queue_times_lab else 0)
+    avg_time_in_queue_specialist.append(np.mean(queue_times_specialist) if queue_times_specialist else 0)
+    total_patients_exited.append(len(exit_count))
+
+# Calculate overall metrics
+overall_avg_time_queue_registration = np.mean(avg_time_in_queue_registration)
+overall_avg_time_queue_doctor = np.mean(avg_time_in_queue_doctor)
+overall_avg_time_queue_lab = np.mean(avg_time_in_queue_lab)
+overall_avg_time_queue_specialist = np.mean(avg_time_in_queue_specialist)
+
+total_patients_exited_mean = np.mean(total_patients_exited)
+
+# Print results
+print(f"Average time in queue for registration: {overall_avg_time_queue_registration:.2f} minutes")
+print(f"Average time in queue for doctor: {overall_avg_time_queue_doctor:.2f} minutes")
+print(f"Average time in queue for lab test: {overall_avg_time_queue_lab:.2f} minutes")
+print(f"Average time in queue for specialist: {overall_avg_time_queue_specialist:.2f} minutes")
+print(f"Average number of patients exited the system: {total_patients_exited_mean}")
+
+# Plotting the average time in queue for each type
+plt.figure(figsize=(10, 6))
+plt.plot(range(REPLICATIONS), avg_time_in_queue_registration, marker='o', linestyle='-', label='Registration Queue')
+plt.plot(range(REPLICATIONS), avg_time_in_queue_doctor, marker='o', linestyle='-', label='Doctor Queue')
+plt.plot(range(REPLICATIONS), avg_time_in_queue_lab, marker='o', linestyle='-', label='Lab Test Queue')
+plt.plot(range(REPLICATIONS), avg_time_in_queue_specialist, marker='o', linestyle='-', label='Specialist Queue')
+plt.title('Average Time in Queue per Replication')
+plt.xlabel('Replication')
+plt.ylabel('Average Time in Queue (minutes)')
+plt.legend()
+plt.grid(True)
+plt.show()
