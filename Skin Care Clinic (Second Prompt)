@@ -1,0 +1,90 @@
+import simpy
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Simulation parameters (all in minutes)
+MEAN_INTERARRIVAL_TIME = 16.2
+TREATMENT_TIME_MIN = 23
+TREATMENT_TIME_MODE = 25
+TREATMENT_TIME_MAX = 27
+SIMULATION_HOURS_PER_DAY = 12
+SIMULATION_DAYS = 14
+REPLICATIONS = 100
+DOCTOR_HOURLY_RATE = 30
+WAITING_TIME_COST_RATE = 0  # Assuming $0 cost per minute of waiting
+
+def run_simulation(num_doctors):
+    average_time_in_queue_list = []
+    total_patients_exited_list = []
+
+    def patient(env, name, doctors, queue_times):
+        arrival_time = env.now
+        with doctors.request() as request:
+            yield request
+            queue_time = env.now - arrival_time
+            queue_times.append(queue_time)
+            treatment_time = np.random.triangular(TREATMENT_TIME_MIN, TREATMENT_TIME_MODE, TREATMENT_TIME_MAX)
+            yield env.timeout(treatment_time)
+
+    def run_clinic(env, doctors, interarrival_time, queue_times):
+        i = 0
+        while True:
+            yield env.timeout(np.random.exponential(interarrival_time))
+            env.process(patient(env, f'Patient {i}', doctors, queue_times))
+            i += 1
+
+    for _ in range(REPLICATIONS):
+        env = simpy.Environment()
+        doctors = simpy.Resource(env, capacity=num_doctors)
+        queue_times = []
+
+        env.process(run_clinic(env, doctors, MEAN_INTERARRIVAL_TIME, queue_times))
+        env.run(until=SIMULATION_HOURS_PER_DAY * 60 * SIMULATION_DAYS)
+
+        average_time_in_queue_list.append(np.mean(queue_times))
+        total_patients_exited_list.append(len(queue_times))
+
+    average_time_in_queue = np.mean(average_time_in_queue_list)
+    total_patients_exited = np.mean(total_patients_exited_list)
+    return average_time_in_queue, total_patients_exited, average_time_in_queue_list
+
+def calculate_total_cost(num_doctors):
+    average_time_in_queue, total_patients_exited, average_time_in_queue_list = run_simulation(num_doctors)
+    cost_of_doctors = num_doctors * DOCTOR_HOURLY_RATE * SIMULATION_HOURS_PER_DAY * SIMULATION_DAYS
+    cost_of_waiting_time = average_time_in_queue * total_patients_exited * WAITING_TIME_COST_RATE
+    total_cost = cost_of_doctors + cost_of_waiting_time
+    return total_cost, average_time_in_queue, total_patients_exited, average_time_in_queue_list
+
+# Find the optimal number of doctors
+doctor_range = range(1, 11)  # Testing from 1 to 10 doctors
+results = []
+
+for num_doctors in doctor_range:
+    total_cost, average_time_in_queue, total_patients_exited, average_time_in_queue_list = calculate_total_cost(num_doctors)
+    results.append((num_doctors, total_cost, average_time_in_queue, total_patients_exited, average_time_in_queue_list))
+
+# Extracting the optimal number of doctors
+optimal_doctors = None
+min_cost = float('inf')
+for num_doctors, total_cost, average_time_in_queue, total_patients_exited, average_time_in_queue_list in results:
+    if average_time_in_queue <= 5 and total_cost < min_cost:
+        min_cost = total_cost
+        optimal_doctors = num_doctors
+
+# Print results
+for num_doctors, total_cost, average_time_in_queue, total_patients_exited, average_time_in_queue_list in results:
+    print(f"Doctors: {num_doctors}, Total Cost: ${total_cost:.2f}, Average Queue Time: {average_time_in_queue:.2f} minutes, Patients Exited: {total_patients_exited:.2f}")
+
+print(f"\nOptimal number of doctors: {optimal_doctors}")
+
+# Plotting the average time in queue per replication for the optimal number of doctors
+for num_doctors, total_cost, average_time_in_queue, total_patients_exited, average_time_in_queue_list in results:
+    if num_doctors == optimal_doctors:
+        plt.figure(figsize=(10, 6))
+        plt.plot(range(REPLICATIONS), average_time_in_queue_list, marker='o', linestyle='-')
+        plt.title(f'Average Time in Queue per Replication for {num_doctors} Doctors')
+        plt.xlabel('Replication')
+        plt.ylabel('Average Time in Queue (minutes)')
+        plt.grid(True)
+        plt.show()
+        break
